@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: whatsapp-bot
+    env: docker
+    plan: free
+    docker:
+      dockerfile: Dockerfile
+    envVars:
+      - key: PHP_ENV
+        value: production

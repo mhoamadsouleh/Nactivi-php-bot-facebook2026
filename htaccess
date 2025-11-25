@@ -1,0 +1,15 @@
+RewriteEngine On
+
+# إعادة توجيه جميع الطلبات إلى bot.php
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule ^(.*)$ bot.php [QSA,L]
+
+# إعدادات الأمان
+<Files "users.db">
+    Deny from all
+</Files>
+
+<Files "*.env">
+    Deny from all
+</Files>
