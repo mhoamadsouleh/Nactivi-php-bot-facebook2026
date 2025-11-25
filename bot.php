@@ -3,12 +3,15 @@
 // إعدادات التطبيق
 define('FACEBOOK_PAGE_ACCESS_TOKEN', 'EAARRlvmJ1MMBP0wsO1KsTftohbeoQP26s3sErFqMz87Ewtw0rZCSOkafb8C7ZCWpILLpcwnFNSiZABgOj7mYdOzPrKJ5WjCm6NVQD2ijl70MalskCOFk8HcZAr1k0XEJhWqOo2R61xGm2mQYFKccPmu06ae7bhPa7omiNmiE1jUk5Q5Tsf0eOb2u9McLLDsjAyHcSntr6QZDZD');
 define('FACEBOOK_GRAPH_API_URL', 'https://graph.facebook.com/v11.0/me/messages');
-define('WEBHOOK_VERIFY_TOKEN', 'Nactivi_2025');
+define('VERIFY_TOKEN', 'Nactivi_2025');
+
+// جلسات المستخدمين
+$user_states = [];
 
 // إعداد قاعدة البيانات
 function init_database() {
-    $db = new SQLite3('users.db');
-    $db->exec('
+    $conn = new SQLite3('users.db');
+    $conn->exec('
         CREATE TABLE IF NOT EXISTS users (
             msisdn TEXT PRIMARY KEY,
             refresh_token TEXT NOT NULL,
@@ -17,22 +20,22 @@ function init_database() {
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     ');
-    $db->close();
+    $conn->close();
 }
 
 function get_user_from_db($msisdn) {
-    $db = new SQLite3('users.db');
-    $stmt = $db->prepare('SELECT * FROM users WHERE msisdn = ?');
+    $conn = new SQLite3('users.db');
+    $stmt = $conn->prepare('SELECT * FROM users WHERE msisdn = ?');
     $stmt->bindValue(1, $msisdn, SQLITE3_TEXT);
     $result = $stmt->execute();
     $user = $result->fetchArray(SQLITE3_ASSOC);
-    $db->close();
+    $conn->close();
     return $user;
 }
 
 function save_user_to_db($msisdn, $refresh_token, $access_token = null) {
-    $db = new SQLite3('users.db');
-    $stmt = $db->prepare('
+    $conn = new SQLite3('users.db');
+    $stmt = $conn->prepare('
         INSERT OR REPLACE INTO users (msisdn, refresh_token, access_token, updated_at)
         VALUES (?, ?, ?, CURRENT_TIMESTAMP)
     ');
@@ -40,48 +43,22 @@ function save_user_to_db($msisdn, $refresh_token, $access_token = null) {
     $stmt->bindValue(2, $refresh_token, SQLITE3_TEXT);
     $stmt->bindValue(3, $access_token, SQLITE3_TEXT);
     $stmt->execute();
-    $db->close();
+    $conn->close();
 }
 
 function update_access_token($msisdn, $access_token) {
-    $db = new SQLite3('users.db');
-    $stmt = $db->prepare('
+    $conn = new SQLite3('users.db');
+    $stmt = $conn->prepare('
         UPDATE users SET access_token = ?, updated_at = CURRENT_TIMESTAMP
         WHERE msisdn = ?
     ');
     $stmt->bindValue(1, $access_token, SQLITE3_TEXT);
     $stmt->bindValue(2, $msisdn, SQLITE3_TEXT);
     $stmt->execute();
-    $db->close();
+    $conn->close();
 }
 
-// دالة واحدة للـ Quick Replies
-function get_quick_replies() {
-    return [
-        [
-            "content_type" => "text",
-            "title" => "تفعيل 2G🎉🎁",
-            "payload" => "GIFTWALKWIN"
-        ],
-        [
-            "content_type" => "text",
-            "title" => "عرض🔖70دج[4جيقا]",
-            "payload" => "BTLINTSPEEDDAY2Go"
-        ],
-        [
-            "content_type" => "text",
-            "title" => "عرض 1Go/100Da🎁❤️",
-            "payload" => "DOVINTSPEEDDAY1GoPRE"
-        ],
-        [
-            "content_type" => "text",
-            "title" => "ارسال دعوة",
-            "payload" => "SEND_INVITATION"
-        ]
-    ];
-}
-
-// تهيئة قاعدة البيانات عند بدء التشغيل
+// تهيئة قاعدة البيانات
 init_database();
 
 function send_facebook_message($recipient_id, $message_text, $quick_replies = null) {
@@ -119,11 +96,23 @@ function send_facebook_message($recipient_id, $message_text, $quick_replies = nu
     if ($http_code != 200) {
         error_log("Error sending message: " . $response);
     }
+    
+    return $response;
 }
 
 function register_msisdn($msisdn) {
     $url = "https://apim.djezzy.dz/oauth2/registration";
+    
     $msisdn = '213' . substr($msisdn, 1);
+    
+    $headers = [
+        "Content-Type: application/x-www-form-urlencoded",
+        "Accept: */*",
+        "User-Agent: Dalvik/2.1.0 (Linux; U; Android 8.1; SM-J230 Build/MRA58K)",
+        "Host: apim.djezzy.dz",
+        "Connection: Keep-Alive",
+        "Accept-Encoding: gzip"
+    ];
 
     $data = [
         "scope" => "smsotp",
@@ -135,23 +124,19 @@ function register_msisdn($msisdn) {
     curl_setopt($ch, CURLOPT_URL, $url);
     curl_setopt($ch, CURLOPT_POST, true);
     curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query($data));
-    curl_setopt($ch, CURLOPT_HTTPHEADER, [
-        "Content-Type: application/x-www-form-urlencoded",
-        "Accept: */*",
-        "User-Agent: Dalvik/2.1.0 (Linux; U; Android 8.1; SM-J230 Build/MRA58K)",
-        "Connection: Keep-Alive",
-        "Accept-Encoding: gzip"
-    ]);
+    curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
     
     $response = curl_exec($ch);
     $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
     curl_close($ch);
     
     if ($http_code == 200) {
+        error_log("Client ID: " . $data["client_id"]);
         return [true, $msisdn];
     } else {
-        error_log("Registration error: HTTP $http_code - $response");
+        error_log("HTTP Error: " . $http_code . " - Response: " . $response);
         return [false, null];
     }
 }
@@ -159,6 +144,15 @@ function register_msisdn($msisdn) {
 function get_auth_token($msisdn, $otp) {
     $url = "https://apim.djezzy.dz/oauth2/token";
     
+    $headers = [
+        "Content-Type: application/x-www-form-urlencoded",
+        "Accept: */*",
+        "User-Agent: Dalvik/2.1.0 (Linux; U; Android 6.0; LG-X230 Build/MRA58K)",
+        "Host: apim.djezzy.dz",
+        "Connection: Keep-Alive",
+        "Accept-Encoding: gzip"
+    ];
+
     $data = [
         "scope" => "openid",
         "client_secret" => "MVpXHW_ImuMsxKIwrJpoVVMHjRsa",
@@ -172,24 +166,21 @@ function get_auth_token($msisdn, $otp) {
     curl_setopt($ch, CURLOPT_URL, $url);
     curl_setopt($ch, CURLOPT_POST, true);
     curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query($data));
-    curl_setopt($ch, CURLOPT_HTTPHEADER, [
-        "Content-Type: application/x-www-form-urlencoded",
-        "Accept: */*",
-        "User-Agent: Dalvik/2.1.0 (Linux; U; Android 6.0; LG-X230 Build/MRA58K)",
-        "Connection: Keep-Alive",
-        "Accept-Encoding: gzip"
-    ]);
+    curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
     
     $response = curl_exec($ch);
     $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $response_data = json_decode($response, true);
     curl_close($ch);
     
     if ($http_code == 200) {
-        $response_data = json_decode($response, true);
+        error_log("Status Code: " . $http_code);
+        error_log("Response Body: " . print_r($response_data, true));
         return [true, $response_data['refresh_token']];
     } else {
-        error_log("Auth token error: HTTP $http_code - $response");
+        error_log("HTTP error occurred: " . $http_code . " - Response: " . $response);
         return [false, null];
     }
 }
@@ -197,6 +188,15 @@ function get_auth_token($msisdn, $otp) {
 function refresh_access_token($refresh_token) {
     $url = "https://apim.djezzy.dz/oauth2/token";
     
+    $headers = [
+        "Content-Type: application/x-www-form-urlencoded",
+        "Accept: */*",
+        "User-Agent: Dalvik/2.1.0 (Linux; U; Android 6.0; LG-X230 Build/MRA58K)",
+        "Host: apim.djezzy.dz",
+        "Connection: Keep-Alive",
+        "Accept-Encoding: gzip"
+    ];
+
     $data = [
         "scope" => "openid",
         "client_secret" => "MVpXHW_ImuMsxKIwrJpoVVMHjRsa",
@@ -209,24 +209,21 @@ function refresh_access_token($refresh_token) {
     curl_setopt($ch, CURLOPT_URL, $url);
     curl_setopt($ch, CURLOPT_POST, true);
     curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query($data));
-    curl_setopt($ch, CURLOPT_HTTPHEADER, [
-        "Content-Type: application/x-www-form-urlencoded",
-        "Accept: */*",
-        "User-Agent: Dalvik/2.1.0 (Linux; U; Android 6.0; LG-X230 Build/MRA58K)",
-        "Connection: Keep-Alive",
-        "Accept-Encoding: gzip"
-    ]);
+    curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
     
     $response = curl_exec($ch);
     $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $response_data = json_decode($response, true);
     curl_close($ch);
     
     if ($http_code == 200) {
-        $response_data = json_decode($response, true);
+        error_log("Status Code: " . $http_code);
+        error_log("Response Body: " . print_r($response_data, true));
         return [true, $response_data['access_token']];
     } else {
-        error_log("Refresh token error: HTTP $http_code - $response");
+        error_log("HTTP error occurred: " . $http_code . " - Response: " . $response);
         return [false, null];
     }
 }
@@ -251,38 +248,61 @@ function get_access_token_for_user($msisdn) {
     return [false, null];
 }
 
-function send_subscription_request($access_token, $msisdn, $product_data) {
+function send_subscription_product2_request($access_token, $msisdn) {
     $url = "https://apim.djezzy.dz/djezzy-api/api/v1/subscribers/{$msisdn}/subscription-product?include=";
     
     $headers = [
         "Content-Type: application/json",
         "Authorization: Bearer {$access_token}",
         "User-Agent: Dalvik/2.1.0 (Linux; U; Android 8.0; OS-G23 Build/MRA58K)",
+        "Host: apim.djezzy.dz",
         "x-csrf-token: wZwt1qJ/EIuSN/LvWzzqOEbTA9F+PNHp2SaAN2YI5qfjTvFy3yU/iSLormoiLVTaMuogXukq2MSFf0XyQOHcqfj5BS9GHYdEfo6tsgW4YvTR5KZjII9/DbcBkZpYKDm0g14twlFvJphrqd9ZBA8MalNKtPS6VqjVdeQMW9jyN1inNnmIESkw+pS0VqZMlqJe0Y9nUbzWElOf99b7PQl779zVh7LJTp/vrfhgTeDBb38RsTVfuB+fIivGVO2eI9LgE6fLLHJGPsnfBApr/3XeLgvbPQ9QizvG14kNxotC/M4c2hNXZU7x0vXC7BOKVrPPfyJHcC/F3PqsQz+7kbXw+HXMgQE1JFjGYoz1Lh1lBTEyiydMDz0tC8E7gZph2228DhVOXJso4Y72SFE0VSfSjGrtSxLYvQvUFWH25OdUwn5HLUFmPpm9M5e8UmL7sqJ+dqM0UlW7o1uF9qsWPuy3j54Ee9XOU+y0wkUsgkMlwUcabT3AzhmI71LfhYrOa/lfiAa1pgL3eXy21e4ExIflYtrWapwJ+Iu7Ovq33hsmGO7Ru4ldLEMekvGwn7oJFtR3i+l9oNUswRaKU0GnutYxf0sEGQsFxhrLU80H6FI7nrqcw9rmh01WjlKhSWIqEHPvtebt4bJCoaP3oZK+nYP2nOmkl6GH7iycJtSypSrGadalcsHn4BUmNukGD0sa189wvYU5hw5O94HBz9FF0ahv2W/32xCd9juXgnsAaKFzAOyWLIS4p5yyuApcnhVgq49AGdbmtkruktiBCF/F/u5J0GNGWnh1XVZdxfVVOgukb68nlud0XK+d6S3hCKnK50HyEuMTzwdu8qYfdl3iSZOK3H//DNMPw091dELVscS+ML7SeEskuXMEwZvvh9+VLWvW74QxZ5TydZ6yAeibISXQF5A==",
         "Connection: Keep-Alive",
         "Accept-Encoding: gzip"
     ];
 
+    $data = [
+        "data" => [
+            "id" => "BTLINTSPEEDDAY2Go",
+            "type" => "products"
+        ]
+    ];
+
     $ch = curl_init();
     curl_setopt($ch, CURLOPT_URL, $url);
     curl_setopt($ch, CURLOPT_POST, true);
-    curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($product_data));
+    curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($data));
     curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
     
     $response = curl_exec($ch);
     $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
     curl_close($ch);
     
     if ($http_code == 200) {
+        error_log("Status Code: " . $http_code);
+        error_log("Response Body: " . $response);
         return true;
     } else {
-        error_log("Subscription error: HTTP $http_code - $response");
+        error_log("HTTP error occurred: " . $http_code . " - Response: " . $response);
         return false;
     }
 }
 
 function send_subscription_product1_request($access_token, $msisdn) {
+    $url = "https://apim.djezzy.dz/djezzy-api/api/v1/subscribers/{$msisdn}/subscription-product?include=";
+    
+    $headers = [
+        "Content-Type: application/json",
+        "Authorization: Bearer {$access_token}",
+        "User-Agent: Dalvik/2.1.0 (Linux; U; Android 8.0; OS-G23 Build/MRA58K)",
+        "Host: apim.djezzy.dz",
+        "x-csrf-token: wZwt1qJ/EIuSN/LvWzzqOEbTA9F+PNHp2SaAN2YI5qfjTvFy3yU/iSLormoiLVTaMuogXukq2MSFf0XyQOHcqfj5BS9GHYdEfo6tsgW4YvTR5KZjII9/DbcBkZpYKDm0g14twlFvJphrqd9ZBA8MalNKtPS6VqjVdeQMW9jyN1inNnmIESkw+pS0VqZMlqJe0Y9nUbzWElOf99b7PQl779zVh7LJTp/vrfhgTeDBb38RsTVfuB+fIivGVO2eI9LgE6fLLHJGPsnfBApr/3XeLgvbPQ9QizvG14kNxotC/M4c2hNXZU7x0vXC7BOKVrPPfyJHcC/F3PqsQz+7kbXw+HXMgQE1JFjGYoz1Lh1lBTEyiydMDz0tC8E7gZph2228DhVOXJso4Y72SFE0VSfSjGrtSxLYvQvUFWH25OdUwn5HLUFmPpm9M5e8UmL7sqJ+dqM0UlW7o1uF9qsWPuy3j54Ee9XOU+y0wkUsgkMlwUcabT3AzhmI71LfhYrOa/lfiAa1pgL3eXy21e4ExIflYtrWapwJ+Iu7Ovq33hsmGO7Ru4ldLEMekvGwn7oJFtR3i+l9oNUswRaKU0GnutYxf0sEGQsFxhrLU80H6FI7nrqcw9rmh01WjlKhSWIqEHPvtebt4bJCoaP3oZK+nYP2nOmkl6GH7iycJtSypSrGadalcsHn4BUmNukGD0sa189wvYU5hw5O94HBz9FF0ahv2W/32xCd9juXgnsAaKFzAOyWLIS4p5yyuApcnhVgq49AGdbmtkruktiBCF/F/u5J0GNGWnh1XVZdxfVVOgukb68nlud0XK+d6S3hCKnK50HyEuMTzwdu8qYfdl3iSZOK3H//DNMPw091dELVscS+ML7SeEskuXMEwZvvh9+VLWvW74QxZ5TydZ6yAeibISXQF5A==",
+        "Connection: Keep-Alive",
+        "Accept-Encoding: gzip"
+    ];
+
     $data = [
         "data" => [
             "id" => "GIFTWALKWIN",
@@ -296,19 +316,27 @@ function send_subscription_product1_request($access_token, $msisdn) {
             ]
         ]
     ];
-    
-    return send_subscription_request($access_token, $msisdn, $data);
-}
 
-function send_subscription_product2_request($access_token, $msisdn) {
-    $data = [
-        "data" => [
-            "id" => "BTLINTSPEEDDAY2Go",
-            "type" => "products"
-        ]
-    ];
+    $ch = curl_init();
+    curl_setopt($ch, CURLOPT_URL, $url);
+    curl_setopt($ch, CURLOPT_POST, true);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($data));
+    curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
     
-    return send_subscription_request($access_token, $msisdn, $data);
+    $response = curl_exec($ch);
+    $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+    
+    if ($http_code == 200) {
+        error_log("Status Code: " . $http_code);
+        error_log("Response Body: " . $response);
+        return true;
+    } else {
+        error_log("HTTP error occurred: " . $http_code . " - Response: " . $response);
+        return false;
+    }
 }
 
 function send_subscription_1go_request($access_token, $msisdn) {
@@ -321,9 +349,9 @@ function send_subscription_1go_request($access_token, $msisdn) {
         "Accept-Encoding: gzip",
         "Authorization: Bearer {$access_token}",
         "Content-Type: application/json; charset=utf-8",
-        "x-csrf-token: 94u26y+DLq/dOQvv+brtfXtTiNx9ETySkLpqNy2wunLuSAzmQG6FY5GBUj3G38tktmKhdbzg9cIysOCGGjRB0eI6AM9DIh9QaOHRcx2EcFsotXDjTtuiWZdOfThAoeutA8wJAP8laKgxY2IwOcebGito22Kx63V3rLKBCqMYLq5mi6NVBkmBKB4hKhBsbV3BXSmrEw+vwZzguP5KjH10gWDsN1Fotz5p7GjZPk+iKUf+MnjSdlB5V1CWaqtcwppHClWEaSiP1nbrNblXV0w3IyBaGysNsOgEMxMdhWZitehTUcZbf+9sQl5Q64fLFkWfWNF10tvwI25rbjdnC5A6WLxsZEfc8smHYnIwTv2Y5r1w2idQDOSITqa2dULn0lzPF8rQ4l8cN8coU+u5MQivqyJ0ipuxHsNR0oaFI/0L81SvdnQMBya9nNgL5dAJIac82yN2ab1yU0/oQ4FxkNjUorKzeoxXvSAwDFbuFIyYHeLP++IabRhNFKWiUvRJ30xpjJGCMsQpkkbl2DCAmqaIjt2fwqNqFgLbjMGMd2T29HoBYGrKIfU7LDB7OnoJIHFbs7TunDSNsKv8w7D9wkiyenp8Af0zV5/Kf4xZCRkZjlWVlvBWAw3lYvDOQxNTSCzVxxB/KYY22kCEVJRxywnULCNymRWqdzTUB1oc8GO9z1t6HWddJLbSavIB80SY5CEATIi+qxQOPHgKHXym9RHy2Xx0i7cErkl0OcaeumHX1JjSXgEYqXYS6w9z+eB7FsFuZPSSmmtfnwjlHZ23+wqRAhHs4scWAr1m59FvSHiW3Fr5zchlW5oedwCjXDxfrGrT0tycYQ6O/r+y8ImEoVOBLMOqmSrMdBd3DR38gW0KeCCayXYYn5UdYU24l3SF/kZ9"
+        "x-csrf-token: 94u26y+DLq/dOQvv+brtfXtTiNx9ETySkLpqNy2wunLuSAzmQG6FY5GBUj3G38tktmKhdbzg9cIysOCGGjRB0eI6AM9DIh9QaOHRcx2EcFsotXDjTtuiWZdOfThAoeutA8wJAP8laKgxY2IwOcebGito22Kx63V3rLKBCqMYLq5mi6NVBkmBKB4hKhBsbV3BXSmrEw+vwZzguP5KjH10gWDsN1Fotz5p7GjZPk+iKUf+MnjSdlB5V1CWaqtcwppHClWEaSiP1nbrNblXV0w3IyBaGysNsOgEMxMdhWZitehTUcZbf+9sQl5Q64fLFkWfWNF10tvwI25rbjdnC5A6WLxsZEfc8smHYnIwTv2Y5r1w2idQDOSITqa2dULn0lzPF8rQ4l8cN8coU+u5MQivqyJ0ipuxHsNR0oaFI/0L81SvdnQMBya9nNgL5dAJIac82yN2ab1yU0/oQ4FxkNjUorKzeoxXvSAwDFbuFIyYHeLP++IabRhNFKWiUvRJ30xpjJGCMsQpkkbl2DCAmqaIjt2fwqNqFgLbjMGMd2T29HoBYGrKIfU7LDB7OnoJIHFbs7TunDSNsKv8w7D9wkiyenp8Af0zV5/Kf4xZCRkZjlWVlvBWAw3lYvDOQxNTSCzVxxB/KYY22kCEVJRxywnULCNymRWqdzTUB1oc8GO9z1t6HWddJLbSavIB80SY5CEATIi+qxQOPHgKHXym9RHy2Xx0i7cErkl0OcaeumHX1JjSXgEYqXYS6w9z+eB7FsFuZPSSmmtfnwjlHZ23+wqRAhHs4scWAr1m59FvSHiW3Fr5zchlW5oedwCjXDxfrGrT0tycYQ6O/r+y8ImEoVOBLMOqmSrMdBd3DR38gW0KeCCayXYYn5UdYU24l3SF/kZ9",
     ];
-    
+
     $data = [
         "data" => [
             "id" => "DOVINTSPEEDDAY1GoPRE",
@@ -337,17 +365,24 @@ function send_subscription_1go_request($access_token, $msisdn) {
     curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($data));
     curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
     
     $response = curl_exec($ch);
     $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
     curl_close($ch);
     
-    return $http_code == 200;
+    if ($http_code == 200) {
+        error_log("Status Code: " . $http_code);
+        error_log("Response Body: " . $response);
+        return true;
+    } else {
+        error_log("HTTP error occurred: " . $http_code . " - Response: " . $response);
+        return false;
+    }
 }
 
 function send_invitation_request($access_token, $msisdn, $b_number) {
     $url = "https://apim.djezzy.dz/djezzy-api/api/v1/subscribers/{$msisdn}/member-get-member?include=";
-    $b_number = '213' . substr($b_number, 1);
     
     $headers = [
         "Accept: */*",
@@ -355,7 +390,8 @@ function send_invitation_request($access_token, $msisdn, $b_number) {
         "User-Agent: Djezzy/2.6.7",
         "Connection: Keep-Alive",
         "x-csrf-token: wZwt1qJ/EIuSN/LvWzzqOEbTA9F+PNHp2SaAN2YI5qfjTvFy3yU/iSLormoiLVTaMuogXukq2MSFf0XyQOHcqfj5BS9GHYdEfo6tsgW4YvTR5KZjII9/DbcBkZpYKDm0g14twlFvJphrqd9ZBA8MalNKtPS6VqjVdeQMW9jyN1inNnmIESkw+pS0VqZMlqJe0Y9nUbzWElOf99b7PQl779zVh7LJTp/vrfhgTeDBb38RsTVfuB+fIivGVO2eI9LgE6fLLHJGPsnfBApr/3XeLgvbPQ9QizvG14kNxotC/M4c2hNXZU7x0vXC7BOKVrPPfyJHcC/F3PqsQz+7kbXw+HXMgQE1JFjGYoz1Lh1lBTEyiydMDz0tC8E7gZph2228DhVOXJso4Y72SFE0VSfSjGrtSxLYvQvUFWH25OdUwn5HLUFmPpm9M5e8UmL7sqJ+dqM0UlW7o1uF9qsWPuy3j54Ee9XOU+y0wkUsgkMlwUcabT3AzhmI71LfhYrOa/lfiAa1pgL3eXy21e4ExIflYtrWapwJ+Iu7Ovq33hsmGO7Ru4ldLEMekvGwn7oJFtR3i+l9oNUswRaKU0GnutYxf0sEGQsFxhrLU80H6FI7nrqcw9rmh01WjlKhSWIqEHPvtebt4bJCoaP3oZK+nYP2nOmkl6GH7iycJtSypSrGadalcsHn4BUmNukGD0sa189wvYU5hw5O94HBz9FF0ahv2W/32xCd9juXgnsAaKFzAOyWLIS4p5yyuApcnhVgq49AGdbmtkruktiBCF/F/u5J0GNGWnh1XVZdxfVVOgukb68nlud0XK+d6S3hCKnK50HyEuMTzwdu8qYfdl3iSZOK3H//DNMPw091dELVscS+ML7SeEskuXMEwZvvh9+VLWvW74QxZ5TydZ6yAeibISXQF5A==",
-        "Authorization: Bearer {$access_token}"
+        "Authorization: Bearer {$access_token}",
+        "Host: apim.djezzy.dz"
     ];
 
     $data = [
@@ -364,7 +400,7 @@ function send_invitation_request($access_token, $msisdn, $b_number) {
             "type" => "products",
             "meta" => [
                 "services" => [
-                    "b-number" => $b_number,
+                    "b-number" => "213" . substr($b_number, 1),
                     "id" => "MemberGetMember"
                 ]
             ]
@@ -377,33 +413,37 @@ function send_invitation_request($access_token, $msisdn, $b_number) {
     curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($data));
     curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
     
     $response = curl_exec($ch);
     $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $response_data = json_decode($response, true);
     curl_close($ch);
     
     if ($http_code == 200) {
-        $response_data = json_decode($response, true);
         if (isset($response_data["body"])) {
             $body = json_decode($response_data["body"], true);
-            if ($body["code"] == 200 && $body["message"] == "OK") {
+            if (isset($body["code"]) && $body["code"] == 200 && isset($body["message"]) && $body["message"] == "OK") {
                 return [true, "OK"];
-            } elseif ($body["code"] == 429 && $body["message"] == "INVITATIONS_LIMIT_REACHED") {
+            } elseif (isset($body["code"]) && $body["code"] == 429 && isset($body["message"]) && $body["message"] == "INVITATIONS_LIMIT_REACHED") {
                 return [false, "INVITATIONS_LIMIT_REACHED"];
-            } elseif ($body["code"] == 419 && $body["message"] == "B_NUMBER_ACCEPTED_INVITATION") {
+            } elseif (isset($body["code"]) && $body["code"] == 419 && isset($body["message"]) && $body["message"] == "B_NUMBER_ACCEPTED_INVITATION") {
                 return [false, "B_NUMBER_ACCEPTED_INVITATION"];
-            } elseif ($body["code"] == 500 && $body["message"] == "INTERNAL_ERROR") {
+            } elseif (isset($body["code"]) && $body["code"] == 500 && isset($body["message"]) && $body["message"] == "INTERNAL_ERROR") {
                 return [false, "INTERNAL_ERROR"];
             }
         }
+        return [false, "UNKNOWN_ERROR"];
+    } else {
+        error_log("Error sending invitation: HTTP " . $http_code . " - " . $response);
+        return [false, "REQUEST_FAILED"];
     }
-    
-    return [false, "UNKNOWN_ERROR"];
 }
 
 function handle_message($sender_id, $message_text, &$user_states) {
-    preg_match('/\d{10}/', $message_text, $msisdn_matches);
-    $msisdn = $msisdn_matches[0] ?? null;
+    // البحث عن أرقام في الرسالة
+    preg_match_all('/\d{10}/', $message_text, $matches);
+    $msisdn = $matches[0] ? $matches[0][0] : null;
     
     if (!isset($user_states[$sender_id])) {
         $welcome_msg = "مرحبا 👋 بك في بوت تسجيل جيزي الجديد! 🎉
@@ -439,14 +479,39 @@ function handle_message($sender_id, $message_text, &$user_states) {
     if ($state["stage"] == "awaiting_msisdn") {
         $msisdn = preg_replace('/\D/', '', $message_text);
         if (strlen($msisdn) == 10 && strpos($msisdn, "07") === 0) {
+            // التحقق إذا كان الرقم مسجل مسبقاً
             $formatted_msisdn = '213' . substr($msisdn, 1);
             $user_data = get_user_from_db($formatted_msisdn);
             
             if ($user_data) {
-                send_facebook_message($sender_id, "🔓 مرحباً بعودتك! الرقم " . substr($msisdn, 0, 4) . "xxxx" . substr($msisdn, -2) . " مسجل مسبقاً.");
+                // الرقم مسجل مسبقاً - نستخدم الـ token المخزن
+                $masked_msisdn = substr($msisdn, 0, 4) . 'xxxx' . substr($msisdn, -2);
+                send_facebook_message($sender_id, "🔓 مرحباً بعودتك! الرقم {$masked_msisdn} مسجل مسبقاً.");
                 list($success, $access_token) = get_access_token_for_user($formatted_msisdn);
                 if ($success) {
-                    send_facebook_message($sender_id, "اختر العرض 🔖:", get_quick_replies());
+                    $quick_replies = [
+                        [
+                            "content_type" => "text",
+                            "title" => "تفعيل 2G🎉🎁",
+                            "payload" => "GIFTWALKWIN"
+                        ],
+                        [
+                            "content_type" => "text",
+                            "title" => "عرض🔖70دج[4جيقا]",
+                            "payload" => "BTLINTSPEEDDAY2Go"
+                        ],
+                        [
+                            "content_type" => "text",
+                            "title" => "عرض 1Go/100Da🎁❤️",
+                            "payload" => "DOVINTSPEEDDAY1GoPRE"
+                        ],
+                        [
+                            "content_type" => "text",
+                            "title" => "ارسال دعوة",
+                            "payload" => "SEND_INVITATION"
+                        ]
+                    ];
+                    send_facebook_message($sender_id, "اختر العرض 🔖:", $quick_replies);
                     $user_states[$sender_id] = [
                         "stage" => "awaiting_confirmation", 
                         "msisdn" => $formatted_msisdn, 
@@ -457,9 +522,11 @@ function handle_message($sender_id, $message_text, &$user_states) {
                     $user_states[$sender_id] = ["stage" => "awaiting_msisdn"];
                 }
             } else {
+                // الرقم غير مسجل - نطلب الرمز
                 list($success, $registered_msisdn) = register_msisdn($msisdn);
                 if ($success) {
-                    send_facebook_message($sender_id, "📱 تم إرسال رسالة نصية إلى " . substr($msisdn, 0, 4) . "xxxx" . substr($msisdn, -2) . " تحتوي على الرمز.");
+                    $masked_msisdn = substr($msisdn, 0, 4) . 'xxxx' . substr($msisdn, -2);
+                    send_facebook_message($sender_id, "📱 تم إرسال رسالة نصية إلى {$masked_msisdn} تحتوي على الرمز.");
                     $user_states[$sender_id] = ["stage" => "awaiting_otp", "msisdn" => $registered_msisdn];
                 } else {
                     send_facebook_message($sender_id, "❌ خطا في السيرفر");
@@ -469,15 +536,17 @@ function handle_message($sender_id, $message_text, &$user_states) {
             send_facebook_message($sender_id, "❌ يرجى ادخال ارقام جيزي فقط (يبدأ بـ 07)");
         }
     } elseif ($state["stage"] == "awaiting_otp") {
-        preg_match('/\d{6}/', $message_text, $otp_matches);
-        preg_match('/\d{10}/', $message_text, $msisdn_matches);
-        $otp = $otp_matches[0] ?? null;
-        $new_msisdn = $msisdn_matches[0] ?? null;
+        preg_match_all('/\d{6}/', $message_text, $otp_matches);
+        preg_match_all('/\d{10}/', $message_text, $msisdn_matches);
+        
+        $otp = $otp_matches[0] ? $otp_matches[0][0] : null;
+        $new_msisdn = $msisdn_matches[0] ? $msisdn_matches[0][0] : null;
 
         if ($new_msisdn && strpos($new_msisdn, "07") === 0) {
             list($success, $registered_msisdn) = register_msisdn($new_msisdn);
             if ($success) {
-                send_facebook_message($sender_id, "📱 تم إرسال رسالة نصية إلى " . substr($new_msisdn, 0, 4) . "xxxx" . substr($new_msisdn, -2) . " تحتوي على الرمز.");
+                $masked_msisdn = substr($new_msisdn, 0, 4) . 'xxxx' . substr($new_msisdn, -2);
+                send_facebook_message($sender_id, "📱 تم إرسال رسالة نصية إلى {$masked_msisdn} تحتوي على الرمز.");
                 $user_states[$sender_id] = ["stage" => "awaiting_otp", "msisdn" => $registered_msisdn];
             } else {
                 send_facebook_message($sender_id, "❌ الرمز المدرج خاطئ، اعد ارسال رقمك للحصول على رمز جديد 📩");
@@ -487,9 +556,33 @@ function handle_message($sender_id, $message_text, &$user_states) {
             if ($success) {
                 list($success, $access_token) = refresh_access_token($refresh_token);
                 if ($success) {
+                    // حفظ المستخدم في قاعدة البيانات
                     save_user_to_db($state["msisdn"], $refresh_token, $access_token);
                     
-                    send_facebook_message($sender_id, "🎉 تم تسجيل رقمك بنجاح! الآن يمكنك استخدامه بدون رمز في المرة القادمة.\n\nاختر العرض 🔖:", get_quick_replies());
+                    $quick_replies = [
+                        [
+                            "content_type" => "text",
+                            "title" => "تفعيل 2G🎉🎁",
+                            "payload" => "GIFTWALKWIN"
+                        ],
+                        [
+                            "content_type" => "text",
+                            "title" => "عرض🔖70دج[4جيقا]",
+                            "payload" => "BTLINTSPEEDDAY2Go"
+                        ],
+                        [
+                            "content_type" => "text",
+                            "title" => "عرض 1Go/100Da🎁❤️",
+                            "payload" => "DOVINTSPEEDDAY1GoPRE"
+                        ],
+                        [
+                            "content_type" => "text",
+                            "title" => "ارسال دعوة",
+                            "payload" => "SEND_INVITATION"
+                        ]
+                    ];
+                    $masked_msisdn = substr($state["msisdn"], 3, 4) . 'xxxx' . substr($state["msisdn"], -2);
+                    send_facebook_message($sender_id, "🎉 تم تسجيل رقمك بنجاح! الآن يمكنك استخدامه بدون رمز في المرة القادمة.\n\nاختر العرض 🔖:", $quick_replies);
                     $user_states[$sender_id] = [
                         "stage" => "awaiting_confirmation", 
                         "msisdn" => $state["msisdn"], 
@@ -505,31 +598,38 @@ function handle_message($sender_id, $message_text, &$user_states) {
         } else {
             send_facebook_message($sender_id, "❌ الرمز المدرج خاطئ، اعد ارسال رقمك للحصول على رمز جديد 📩");
         }
+    
     } elseif ($state["stage"] == "awaiting_confirmation") {
         if ($message_text == "تفعيل 2G🎉🎁") {
             $subscription_success = send_subscription_product1_request($state["access_token"], $state["msisdn"]);
             if ($subscription_success) {
-                send_facebook_message($sender_id, "🎉 " . substr($state['msisdn'], 3, 4) . "xxxx" . substr($state['msisdn'], -2) . " تم تفعيل 2G بنجاح!");
+                $masked_msisdn = substr($state["msisdn"], 3, 4) . 'xxxx' . substr($state["msisdn"], -2);
+                send_facebook_message($sender_id, "🎉 {$masked_msisdn} تم تفعيل 2G بنجاح!");
             } else {
                 send_facebook_message($sender_id, "⚠️ حدث خطأ - يبدو انك سجلت مسبقاً ولم تكمل اسبوعا 📆");
             }
             $user_states[$sender_id] = ["stage" => "awaiting_msisdn"];
+        
         } elseif ($message_text == "عرض🔖70دج[4جيقا]") {
             $subscription_success = send_subscription_product2_request($state["access_token"], $state["msisdn"]);
             if ($subscription_success) {
-                send_facebook_message($sender_id, "🎉 " . substr($state['msisdn'], 3, 4) . "xxxx" . substr($state['msisdn'], -2) . " تم تفعيل العرض بنجاح! 😁");
+                $masked_msisdn = substr($state["msisdn"], 3, 4) . 'xxxx' . substr($state["msisdn"], -2);
+                send_facebook_message($sender_id, "🎉 {$masked_msisdn} تم تفعيل العرض بنجاح! 😁");
             } else {
                 send_facebook_message($sender_id, "⚠️ حدث خطا - رصيدك غير كافي💰 لتفعيل هذا العرض🔖");
             }
             $user_states[$sender_id] = ["stage" => "awaiting_msisdn"];
+        
         } elseif ($message_text == "عرض 1Go/100Da🎁❤️") {
             $subscription_success = send_subscription_1go_request($state["access_token"], $state["msisdn"]);
             if ($subscription_success) {
-                send_facebook_message($sender_id, "🎉 " . substr($state['msisdn'], 3, 4) . "xxxx" . substr($state['msisdn'], -2) . " تم تفعيل عرض 1Go/100Da بنجاح! 😁");
+                $masked_msisdn = substr($state["msisdn"], 3, 4) . 'xxxx' . substr($state["msisdn"], -2);
+                send_facebook_message($sender_id, "🎉 {$masked_msisdn} تم تفعيل عرض 1Go/100Da بنجاح! 😁");
             } else {
                 send_facebook_message($sender_id, "⚠️ حدث خطا - رصيدك غير كافي💰 لتفعيل هذا العرض🔖");
             }
             $user_states[$sender_id] = ["stage" => "awaiting_msisdn"];
+        
         } elseif ($message_text == "ارسال دعوة") {
             send_facebook_message($sender_id, "الرجاء إدخال رقم الهاتف الذي تريد إرسال الدعوة إليه (يجب أن يبدأ بـ 07):");
             $user_states[$sender_id] = [
@@ -538,6 +638,7 @@ function handle_message($sender_id, $message_text, &$user_states) {
                 "access_token" => $state["access_token"]
             ];
         }
+    
     } elseif ($state["stage"] == "awaiting_invitation_number") {
         $b_number = preg_replace('/\D/', '', $message_text);
         if (strlen($b_number) == 10 && strpos($b_number, "07") === 0) {
@@ -554,7 +655,8 @@ function handle_message($sender_id, $message_text, &$user_states) {
             }
             
             if ($success_count > 0) {
-                send_facebook_message($sender_id, "تم ارسال الدعوة بنجاح إلى " . substr($b_number, 0, 4) . "xxxx" . substr($b_number, -2) . "   الان ماعليك فعله هو فقط ارسال الرقم المدعو الينا والرمز الذي  وصل في رسالة DJEZZY APP او يمكنك الدخول فقط لتطبيق جيزي بالرقم المدعو");
+                $masked_b_number = substr($b_number, 0, 4) . 'xxxx' . substr($b_number, -2);
+                send_facebook_message($sender_id, "تم ارسال الدعوة بنجاح إلى {$masked_b_number}   الان ماعليك فعله هو فقط ارسال الرقم المدعو الينا والرمز الذي  وصل في رسالة DJEZZY APP او يمكنك الدخول فقط لتطبيق جيزي بالرقم المدعو");
             } else {
                 if (in_array("INVITATIONS_LIMIT_REACHED", $error_messages)) {
                     send_facebook_message($sender_id, "لم تكمل اسبوعا");
@@ -574,82 +676,45 @@ function handle_message($sender_id, $message_text, &$user_states) {
     }
 }
 
-// =============================================
-// معالجة ويب هوك - الجزء الرئيسي
-// =============================================
-
+// معالجة طلبات الويب هوك
 if ($_SERVER['REQUEST_METHOD'] === 'GET') {
-    // التحقق من الويب هوك
-    $token = $_GET['hub_verify_token'] ?? '';
-    $challenge = $_GET['hub_challenge'] ?? '';
-    
-    if ($token === WEBHOOK_VERIFY_TOKEN) {
-        echo $challenge;
+    // تحقق من التوكن
+    if (isset($_GET['hub_verify_token']) && $_GET['hub_verify_token'] === VERIFY_TOKEN) {
+        echo $_GET['hub_challenge'];
         exit;
     } else {
         http_response_code(403);
-        echo "Verification failed";
+        echo 'Invalid verify token';
         exit;
     }
 } elseif ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    // استقبال الأحداث من فيسبوك
-    $input = file_get_contents('php://input');
-    $data = json_decode($input, true);
+    // معالجة الرسائل
+    $input = json_decode(file_get_contents('php://input'), true);
     
-    error_log("Webhook received: " . print_r($data, true));
-    
-    if (isset($data['object']) && $data['object'] === 'page') {
-        foreach ($data['entry'] as $entry) {
+    if (isset($input['object']) && $input['object'] === 'page') {
+        foreach ($input['entry'] as $entry) {
             $page_id = $entry['id'];
             $time = $entry['time'];
             
-            foreach ($entry['messaging'] as $messaging_event) {
-                if (isset($messaging_event['message'])) {
-                    $sender_id = $messaging_event['sender']['id'];
-                    $message_text = $messaging_event['message']['text'] ?? '';
-                    $message_id = $messaging_event['message']['mid'] ?? '';
+            foreach ($entry['messaging'] as $messaging) {
+                if (isset($messaging['message'])) {
+                    $sender_id = $messaging['sender']['id'];
+                    $message_text = $messaging['message']['text'];
                     
                     // معالجة الرسالة
-                    handle_webhook_message($sender_id, $message_text, $message_id);
-                } elseif (isset($messaging_event['postback'])) {
-                    // معالجة Postback (Quick Replies)
-                    $sender_id = $messaging_event['sender']['id'];
-                    $payload = $messaging_event['postback']['payload'] ?? '';
-                    
-                    if ($payload) {
-                        handle_webhook_message($sender_id, $payload, uniqid());
-                    }
+                    handle_message($sender_id, $message_text, $user_states);
                 }
             }
         }
-        echo "EVENT_RECEIVED";
+        
+        echo 'EVENT_RECEIVED';
     } else {
         http_response_code(404);
-        echo "Invalid request";
+        echo 'Not a page event';
     }
-    exit;
+} else {
+    http_response_code(405);
+    echo 'Method not allowed';
 }
-
-// دالة معالجة الرسائل من الويب هوك
-function handle_webhook_message($sender_id, $message_text, $message_id) {
-    static $user_states = [];
-    static $processed_message_ids = [];
-    
-    // تجنب معالجة الرسائل المكررة
-    if (in_array($message_id, $processed_message_ids)) {
-        return;
-    }
-    
-    handle_message($sender_id, $message_text, $user_states);
-    $processed_message_ids[] = $message_id;
-    
-    // الحفاظ على حجم المصفوفة معقول
-    if (count($processed_message_ids) > 1000) {
-        array_shift($processed_message_ids);
-    }
-}
-
-// إظهار رسالة إذا تم الوصول للصفحة مباشرة
-echo "WhatsApp Bot is running! Webhook URL is ready for Facebook.";
 
 ?>
