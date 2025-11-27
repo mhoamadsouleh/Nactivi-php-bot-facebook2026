@@ -1,10 +1,10 @@
 services:
   - type: web
-    name: whatsapp-bot
-    env: docker
+    name: facebook-djezzy-bot
+    env: php
     plan: free
-    docker:
-      dockerfile: Dockerfile
+    buildCommand: ""
+    startCommand: "php -S 0.0.0.0:10000 index.php"
     envVars:
-      - key: PHP_ENV
-        value: production
+      - key: PHP_VERSION
+        value: "8.1"
